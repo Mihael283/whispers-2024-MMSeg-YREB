@@ -3,6 +3,8 @@
 MMSeg-YREB/
 README_init.md
 saved_models/
+*.npy
+visualizations/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
