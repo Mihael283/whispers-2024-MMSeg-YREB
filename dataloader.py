@@ -34,13 +34,13 @@ class WhisperSegDataset(Dataset):
         
         combined_data = np.vstack((msi_data, sar_data)) 
 
-
         if self.split == 'train':
             with rasterio.open(os.path.join(self.label_dir, filename)) as src:
                 label_data = src.read(window=rasterio.windows.Window(0, 0, 256, 256))
             label_data = label_data.squeeze().astype(np.int64) 
-            label_data -= 1 
-            label_data[label_data < 0] = 0
+            # Remove the label adjustment
+            # label_data -= 1 
+            # label_data[label_data < 0] = 0
         else:
             label_data = np.zeros((256, 256), dtype=np.int64) 
         
