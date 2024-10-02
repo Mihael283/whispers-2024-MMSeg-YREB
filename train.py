@@ -10,10 +10,12 @@ import matplotlib.pyplot as plt
 from losses import FocalLoss, mIoULoss
 from models.unet import UNet
 from dataloader import WhisperDataLoader, get_dataloaders
-from plots import plot_losses, visualize_predictions
+from plots import plot_losses, visualize_predictions, visualize_batch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
+
+DEBUG = False
 
 data_path = 'MMSeg-YREB'
 num_epochs = 100
@@ -22,8 +24,21 @@ num_classes = 10  # Updated to 10 classes
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Loss
-focal_loss = FocalLoss(gamma=3/4).to(device)
+alpha = [
+    0.55,  # Tree
+    0.04,  # Grassland
+    0.07,  # Cropland
+    0.19,  # Low Vegetation
+    0.01,  # Wetland
+    0.04,  # Water
+    0.04,  # Built-up
+    0.04,  # Bareground
+    0.01   # Snow
+]
+
+alpha = [a / sum(alpha) for a in alpha]
+
+focal_loss = FocalLoss(gamma=3/4, alpha=alpha).to(device)
 iou_loss = mIoULoss(n_classes=num_classes).to(device)
 
 def combined_loss(pred, target):
@@ -82,23 +97,46 @@ for epoch in range(num_epochs):
     model.train()
     train_loss_list = []
     train_acc_list = []
-    train_loop = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
-    for x, y in train_loop:
+    train_loop = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
+    for batch_idx, (x, y) in train_loop:
         x, y = x.to(device), y.to(device)
+
+        if DEBUG:
+            print(f"Batch {batch_idx}")
+            print(f"Input shape: {x.shape}, Range: ({x.min().item():.2f}, {x.max().item():.2f})")
+            print(f"Unique values in ground truth: {torch.unique(y).cpu().numpy()}")
+
         pred_mask = model(x)  
+
+        if DEBUG:
+            with torch.no_grad():
+                print(f"Output shape: {pred_mask.shape}")
+                print(f"Output range: ({pred_mask.min().item():.2f}, {pred_mask.max().item():.2f})")
+                print(f"Unique predicted classes: {torch.unique(pred_mask.argmax(dim=1)).cpu().numpy()}")
+
         loss = criterion(pred_mask, y)
 
         optimizer.zero_grad()
         loss.backward()
+
+        if DEBUG:
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    print(f"{name} - grad range: ({param.grad.min().item():.2f}, {param.grad.max().item():.2f})")
+        
         optimizer.step()
         train_loss_list.append(loss.cpu().detach().numpy())
-
-        global_step += 1
 
         seg_acc = (y.cpu() == torch.argmax(pred_mask, axis=1).cpu()).sum() / torch.numel(y.cpu())
         train_acc_list.append(seg_acc.numpy())
 
         train_loop.set_postfix(loss=np.mean(train_loss_list), acc=np.mean(train_acc_list))
+        
+        # Visualize every 10th batch
+        if batch_idx % 10 == 0:
+            with torch.no_grad():
+                preds = torch.argmax(pred_mask, dim=1)
+                visualize_batch(model, x, y, preds, batch_idx, epoch)
         
         # Check if it's time to visualize
         #if global_step % visualize_interval == 0:
@@ -143,7 +181,7 @@ for epoch in range(num_epochs):
     print(f"Epoch {epoch+1}: Learning rate set to {optimizer.param_groups[0]['lr']}")
 
     if global_step % visualize_interval == 0:
-            visualize_predictions(model, val_dataloader, device, mean, std, n_samples=3, step=global_step)
+           visualize_predictions(model, val_dataloader, device, mean, std, n_samples=5, step=global_step)
 
 np.save('plot_losses.npy', np.array(plot_losses_data))
 plot_losses()

@@ -27,13 +27,15 @@ class FocalLoss(nn.Module):
         if self.alpha is not None:
             if self.alpha.type()!=input.data.type():
                 self.alpha = self.alpha.type_as(input.data)
+            if self.alpha.size(0) < input.size(1):
+                # If alpha has fewer elements than classes, repeat the last value
+                self.alpha = torch.cat([self.alpha, self.alpha[-1].repeat(input.size(1) - self.alpha.size(0))])
             at = self.alpha.gather(0,target.data.view(-1))
             logpt = logpt * Variable(at)
 
         loss = -1 * (1-pt)**self.gamma * logpt
         if self.size_average: return loss.mean()
         else: return loss.sum()
-
 
 class mIoULoss(nn.Module):
     def __init__(self, weight=None, size_average=True, n_classes=2):

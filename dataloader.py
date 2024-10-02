@@ -3,14 +3,16 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
+from torchvision.transforms import functional as TF
 import rasterio
-import matplotlib.pyplot as plt
+import random
 
 class WhisperSegDataset(Dataset):
-    def __init__(self, data_dir, split='train', transform=None):
+    def __init__(self, data_dir, split='train', transform=None, augment=False):
         self.data_dir = data_dir
         self.split = split
         self.transform = transform
+        self.augment = augment
         
         with open(os.path.join(data_dir, f'{split}.txt'), 'r') as f:
             self.file_list = [line.strip() for line in f.readlines()]
@@ -47,13 +49,41 @@ class WhisperSegDataset(Dataset):
         combined_data = torch.from_numpy(combined_data).float()
         label_data = torch.from_numpy(label_data).long()
         
+        if self.augment:
+            combined_data, label_data = self.apply_augmentations(combined_data, label_data)
+        
         if self.transform:
             combined_data = self.transform(combined_data)
         
         return combined_data, label_data
+    
+    def apply_augmentations(self, image, mask):
+        mask = mask.unsqueeze(0)
 
+        if random.random() > 0.5:
+            angle = random.randint(-100, 100)
+            image = TF.rotate(image, angle)
+            mask = TF.rotate(mask, angle)
+
+        if random.random() > 0.5:
+            image = TF.hflip(image)
+            mask = TF.hflip(mask)
+
+        if random.random() > 0.5:
+            image = TF.vflip(image)
+            mask = TF.vflip(mask)
+
+        if random.random() > 0.8:
+            noise = torch.randn_like(image) * 0.02
+            image = image + noise
+            image = torch.clamp(image, 0, 1)
+
+        mask = mask.squeeze(0)
+
+        return image, mask
+    
 class WhisperDataLoader:
-    def __init__(self, data_dir, batch_size=32, num_workers=4, mean=[0.485] * 13 + [0.5], std=[0.229] * 13 + [0.1], normalize=True):
+    def __init__(self, data_dir, batch_size=32, num_workers=4, mean=[0.485] * 13 + [0.5], std=[0.229] * 13 + [0.1], normalize=True, augment=True):
         """
         Args:
             data_dir (str): Path to the data directory.
@@ -66,6 +96,8 @@ class WhisperDataLoader:
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.augment = augment
+
 
         if normalize:
             if mean is None or std is None:
@@ -74,7 +106,7 @@ class WhisperDataLoader:
         else:
             self.transform = None
 
-        self.train_dataset = WhisperSegDataset(data_dir, split='train', transform=self.transform)
+        self.train_dataset = WhisperSegDataset(data_dir, split='train', transform=self.transform, augment=self.augment)
         
         train_size = int(0.8 * len(self.train_dataset))
         val_size = len(self.train_dataset) - train_size
@@ -100,7 +132,7 @@ class WhisperDataLoader:
         )
 
 
-def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None, normalize=True):
+def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None, normalize=True, augment=True):
     """
     Returns:
         train_loader, val_loader, test_loader
@@ -111,7 +143,8 @@ def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None,
         num_workers=num_workers, 
         mean=mean, 
         std=std, 
-        normalize=normalize
+        normalize=normalize,
+        augment=augment
     )
     return (
         dataloader.get_train_dataloader(),
