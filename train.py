@@ -13,18 +13,21 @@ from dataloader import WhisperDataLoader, get_dataloaders
 from plots import plot_losses, visualize_batch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+from sklearn.metrics import confusion_matrix
+
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 
 DEBUG = False
 
 data_path = 'MMSeg-YREB'
 num_epochs = 100
-batch_size = 32
-num_classes = 10  # Updated to 10 classes
+batch_size = 16
+num_classes = 10 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 alpha = [
+    0.10,  # Background
     0.55,  # Tree
     0.04,  # Grassland
     0.07,  # Cropland
@@ -36,7 +39,8 @@ alpha = [
     0.01   # Snow
 ]
 
-alpha = [a / sum(alpha) for a in alpha]
+alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
+alpha = alpha / alpha.sum()
 
 focal_loss = FocalLoss(gamma=3/4, alpha=alpha).to(device)
 iou_loss = mIoULoss(n_classes=num_classes).to(device)
@@ -63,7 +67,8 @@ print('Number of training data:', len(train_dataloader.dataset))
 print('Number of validation data:', len(val_dataloader.dataset))
 print('Number of test data:', len(test_dataloader.dataset))
 
-model = DeepLabV3Plus(num_classes=num_classes,num_channels=14).to(device)
+model = DeepLabV3Plus(num_classes=num_classes, num_channels=14).to(device)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
 T_max = num_epochs
@@ -74,11 +79,8 @@ os.makedirs('./saved_models', exist_ok=True)
 min_loss = float('inf')
 plot_losses_data = []
 
-# Set visualization interval
 visualize_interval = 1
 global_step = 0	
-
-from sklearn.metrics import confusion_matrix
 
 def calculate_miou(y_pred, y_true, num_classes):
     y_pred = y_pred.flatten()
@@ -101,47 +103,24 @@ for epoch in range(num_epochs):
     for batch_idx, (x, y) in train_loop:
         x, y = x.to(device), y.to(device)
 
-        if DEBUG:
-            print(f"Batch {batch_idx}")
-            print(f"Input shape: {x.shape}, Range: ({x.min().item():.2f}, {x.max().item():.2f})")
-            print(f"Unique values in ground truth: {torch.unique(y).cpu().numpy()}")
-
+        optimizer.zero_grad()
         pred_mask = model(x)  
 
-        if DEBUG:
-            with torch.no_grad():
-                print(f"Output shape: {pred_mask.shape}")
-                print(f"Output range: ({pred_mask.min().item():.2f}, {pred_mask.max().item():.2f})")
-                print(f"Unique predicted classes: {torch.unique(pred_mask.argmax(dim=1)).cpu().numpy()}")
-
         loss = criterion(pred_mask, y)
-
-        optimizer.zero_grad()
         loss.backward()
-
-        if DEBUG:
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    print(f"{name} - grad range: ({param.grad.min().item():.2f}, {param.grad.max().item():.2f})")
-        
         optimizer.step()
         train_loss_list.append(loss.cpu().detach().numpy())
 
         seg_acc = (y.cpu() == torch.argmax(pred_mask, axis=1).cpu()).sum() / torch.numel(y.cpu())
-        train_acc_list.append(seg_acc.numpy())
+        train_acc_list.append(seg_acc.item())
 
         train_loop.set_postfix(loss=np.mean(train_loss_list), acc=np.mean(train_acc_list))
         
-        # Visualize every 10th batch
-        if batch_idx % 10 == 0:  # Visualize every 10th batch
+        if batch_idx % 50 == 0:
             with torch.no_grad():
                 preds = torch.argmax(pred_mask, dim=1)
                 visualize_batch(model, x, y, preds, batch_idx, epoch, mean=mean, std=std)
         
-        # Check if it's time to visualize
-        #if global_step % visualize_interval == 0:
-            #visualize_predictions(model, val_dataloader, device, mean, std, n_samples=3, step=global_step)
-    
     model.eval()
     val_loss_list = []
     val_acc_list = []
@@ -158,11 +137,11 @@ for epoch in range(num_epochs):
             seg_acc = (y == preds).float().mean()
             val_acc_list.append(seg_acc.cpu().numpy())
 
-            miou = calculate_miou(preds.cpu().numpy(), y.cpu().numpy(), num_classes=9)
+            miou = calculate_miou(preds.cpu().numpy(), y.cpu().numpy(), num_classes=num_classes)
             val_miou_list.append(miou)
 
             val_loop.set_postfix(loss=np.mean(val_loss_list), acc=np.mean(val_acc_list))
-
+    
     val_miou = np.mean(val_miou_list)
     train_loss = np.mean(train_loss_list)
     train_acc = np.mean(train_acc_list)
@@ -175,13 +154,10 @@ for epoch in range(num_epochs):
     is_best = val_loss < min_loss
     if is_best:
         min_loss = val_loss
-        torch.save(model.state_dict(), f'./saved_models/unet_epoch_{epoch+1}_{val_loss:.5f}.pt')
+        torch.save(model.state_dict(), f'./saved_models/deeplabv3plus_epoch_{epoch+1}_{val_loss:.5f}.pt')
 
     lr_scheduler.step()
     print(f"Epoch {epoch+1}: Learning rate set to {optimizer.param_groups[0]['lr']}")
-
-    #if global_step % visualize_interval == 0:
-           #visualize_predictions(model, val_dataloader, device, mean, std, n_samples=5, step=global_step)
 
 np.save('plot_losses.npy', np.array(plot_losses_data))
 plot_losses()
