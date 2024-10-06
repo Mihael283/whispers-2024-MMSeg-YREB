@@ -8,9 +8,9 @@ from rasterio.errors import NotGeoreferencedWarning
 import matplotlib.pyplot as plt
 
 from losses import FocalLoss, mIoULoss
-from models.unet import UNet
+from models.deeplabv3 import DeepLabV3Plus
 from dataloader import WhisperDataLoader, get_dataloaders
-from plots import plot_losses, visualize_predictions, visualize_batch
+from plots import plot_losses, visualize_batch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
@@ -63,8 +63,8 @@ print('Number of training data:', len(train_dataloader.dataset))
 print('Number of validation data:', len(val_dataloader.dataset))
 print('Number of test data:', len(test_dataloader.dataset))
 
-model = UNet(n_channels=14, n_classes=num_classes, bilinear=True).to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+model = DeepLabV3Plus(num_classes=num_classes,num_channels=14).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
 T_max = num_epochs
 eta_min = 1e-6
@@ -133,10 +133,10 @@ for epoch in range(num_epochs):
         train_loop.set_postfix(loss=np.mean(train_loss_list), acc=np.mean(train_acc_list))
         
         # Visualize every 10th batch
-        if batch_idx % 10 == 0:
+        if batch_idx % 10 == 0:  # Visualize every 10th batch
             with torch.no_grad():
                 preds = torch.argmax(pred_mask, dim=1)
-                visualize_batch(model, x, y, preds, batch_idx, epoch)
+                visualize_batch(model, x, y, preds, batch_idx, epoch, mean=mean, std=std)
         
         # Check if it's time to visualize
         #if global_step % visualize_interval == 0:
@@ -180,8 +180,8 @@ for epoch in range(num_epochs):
     lr_scheduler.step()
     print(f"Epoch {epoch+1}: Learning rate set to {optimizer.param_groups[0]['lr']}")
 
-    if global_step % visualize_interval == 0:
-           visualize_predictions(model, val_dataloader, device, mean, std, n_samples=5, step=global_step)
+    #if global_step % visualize_interval == 0:
+           #visualize_predictions(model, val_dataloader, device, mean, std, n_samples=5, step=global_step)
 
 np.save('plot_losses.npy', np.array(plot_losses_data))
 plot_losses()

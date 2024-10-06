@@ -1,18 +1,41 @@
 import os
+import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 from torchvision.transforms import functional as TF
 import rasterio
-import random
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.ndimage import uniform_filter
+import findpeaks
+
+def enhanced_lee_filter(img, win_size=5, k=1.0, cu=0.523, cmax=1.73):
+    """
+    Apply Enhanced Lee filter to reduce speckle noise in SAR images.
+    
+    Args:
+        img (numpy.ndarray): Input SAR image.
+        win_size (int): Size of the filter window (must be odd).
+        k (float): Damping factor for the filter.
+        cu (float): Coefficient of variation for lee enhanced of noise.
+        cmax (float): Max coefficient of variation for lee enhanced.
+    
+    Returns:
+        numpy.ndarray: Filtered image.
+    """
+    img = findpeaks.stats.scale(img)
+    return findpeaks.lee_enhanced_filter(img, win_size=win_size, k=k, cu=cu, cmax=cmax)
+
 
 class WhisperSegDataset(Dataset):
-    def __init__(self, data_dir, split='train', transform=None, augment=False):
+    def __init__(self, data_dir, split='train', transform=None, augment=False , apply_lee_filter=False):
         self.data_dir = data_dir
         self.split = split
         self.transform = transform
         self.augment = augment
+        self.apply_lee_filter = apply_lee_filter
         
         with open(os.path.join(data_dir, f'{split}.txt'), 'r') as f:
             self.file_list = [line.strip() for line in f.readlines()]
@@ -33,16 +56,18 @@ class WhisperSegDataset(Dataset):
         
         with rasterio.open(os.path.join(self.sar_dir, filename)) as src:
             sar_data = src.read(window=rasterio.windows.Window(0, 0, 256, 256))
-        
+
+        if self.apply_lee_filter:
+            # Apply Enhanced Lee filter to each band of the SAR data
+            for i in range(sar_data.shape[0]):
+                sar_data[i] = enhanced_lee_filter(sar_data[i])
+
         combined_data = np.vstack((msi_data, sar_data)) 
 
         if self.split == 'train':
             with rasterio.open(os.path.join(self.label_dir, filename)) as src:
                 label_data = src.read(window=rasterio.windows.Window(0, 0, 256, 256))
             label_data = label_data.squeeze().astype(np.int64) 
-            # Remove the label adjustment
-            # label_data -= 1 
-            # label_data[label_data < 0] = 0
         else:
             label_data = np.zeros((256, 256), dtype=np.int64) 
         
@@ -76,14 +101,15 @@ class WhisperSegDataset(Dataset):
         if random.random() > 0.8:
             noise = torch.randn_like(image) * 0.02
             image = image + noise
-            image = torch.clamp(image, 0, 1)
+            # Removed clamp to prevent excessive clipping which might cause images to appear white
+            image = torch.clamp(image, image.min(), image.max())
 
         mask = mask.squeeze(0)
 
         return image, mask
-    
+
 class WhisperDataLoader:
-    def __init__(self, data_dir, batch_size=32, num_workers=4, mean=[0.485] * 13 + [0.5], std=[0.229] * 13 + [0.1], normalize=True, augment=True):
+    def __init__(self, data_dir, batch_size=32, num_workers=4, mean=None, std=None, normalize=True, augment=True, apply_lee_filter=False):
         """
         Args:
             data_dir (str): Path to the data directory.
@@ -97,7 +123,7 @@ class WhisperDataLoader:
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.augment = augment
-
+        self.apply_lee_filter = apply_lee_filter
 
         if normalize:
             if mean is None or std is None:
@@ -106,7 +132,7 @@ class WhisperDataLoader:
         else:
             self.transform = None
 
-        self.train_dataset = WhisperSegDataset(data_dir, split='train', transform=self.transform, augment=self.augment)
+        self.train_dataset = WhisperSegDataset(data_dir, split='train', transform=self.transform, augment=self.augment, apply_lee_filter=self.apply_lee_filter)
         
         train_size = int(0.8 * len(self.train_dataset))
         val_size = len(self.train_dataset) - train_size
@@ -131,8 +157,7 @@ class WhisperDataLoader:
             self.test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
         )
 
-
-def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None, normalize=True, augment=True):
+def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None, normalize=True, augment=True, apply_lee_filter=False):
     """
     Returns:
         train_loader, val_loader, test_loader
@@ -144,7 +169,8 @@ def get_dataloaders(data_dir, batch_size=32, num_workers=4, mean=None, std=None,
         mean=mean, 
         std=std, 
         normalize=normalize,
-        augment=augment
+        augment=augment,
+        apply_lee_filter=apply_lee_filter
     )
     return (
         dataloader.get_train_dataloader(),
