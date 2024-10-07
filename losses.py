@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from lovasz_losses import lovasz_softmax  # If using Lovász-Softmax
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma=0, alpha=None, size_average=True):
@@ -71,3 +72,32 @@ class mIoULoss(nn.Module):
 
         ## Return average loss over classes and batch
         return 1-loss.mean()
+
+
+
+class CombinedLoss(nn.Module):
+    def __init__(self, weight_ce, weight_secondary=1.0, secondary_loss='miou', num_classes=10):
+        super(CombinedLoss, self).__init__()
+        self.ce = nn.CrossEntropyLoss(weight=weight_ce)
+        self.weight_secondary = weight_secondary
+        self.secondary_loss_type = secondary_loss.lower()
+        self.num_classes = num_classes
+        
+        if self.secondary_loss_type == 'miou':
+            self.secondary = mIoULoss(n_classes=num_classes)
+        elif self.secondary_loss_type == 'lovasz':
+            # lovasz_softmax expects logits before softmax
+            # Ensure that lovasz_softmax is correctly implemented or imported
+            self.secondary = lovasz_softmax
+        else:
+            raise ValueError(f"Unsupported secondary loss type: {secondary_loss}. Choose 'miou' or 'lovasz'.")
+
+    def forward(self, logits, target):
+        ce_loss = self.ce(logits, target)
+        
+        if self.secondary_loss_type == 'miou':
+            miou_loss = self.secondary(logits, target)
+            return ce_loss + self.weight_secondary * miou_loss
+        elif self.secondary_loss_type == 'lovasz':
+            lovasz_loss = self.secondary(F.softmax(logits, dim=1), target)
+            return ce_loss + self.weight_secondary * lovasz_loss

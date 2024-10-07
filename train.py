@@ -1,28 +1,27 @@
 import numpy as np
 import os
 import torch
-from torch import nn
 from tqdm import tqdm
 import warnings
 from rasterio.errors import NotGeoreferencedWarning
-import matplotlib.pyplot as plt
-
-from losses import FocalLoss, mIoULoss
+from losses import CombinedLoss
 from models.deeplabv3 import DeepLabV3Plus
+from models.unet import UNet
 from dataloader import WhisperDataLoader, get_dataloaders
 from plots import plot_losses, visualize_batch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from sklearn.metrics import confusion_matrix
+import torch.nn.functional as F
 
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 
 DEBUG = False
 
 data_path = 'MMSeg-YREB'
-num_epochs = 100
-batch_size = 16
-num_classes = 10 
+num_epochs = 40
+batch_size = 32
+num_classes = 10
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -42,13 +41,10 @@ alpha = [
 alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
 alpha = alpha / alpha.sum()
 
-focal_loss = FocalLoss(gamma=3/4, alpha=alpha).to(device)
-iou_loss = mIoULoss(n_classes=num_classes).to(device)
+# Options: 'miou' or 'lovasz'
+secondary_loss_type = 'lovasz'
 
-def combined_loss(pred, target):
-    return focal_loss(pred, target) + iou_loss(pred, target)
-
-criterion = combined_loss
+criterion = CombinedLoss(weight_ce=alpha, weight_secondary=1.0, secondary_loss=secondary_loss_type).to(device)
 
 mean = [0.485] * 13 + [0.5]
 std = [0.229] * 13 + [0.1]
@@ -67,9 +63,9 @@ print('Number of training data:', len(train_dataloader.dataset))
 print('Number of validation data:', len(val_dataloader.dataset))
 print('Number of test data:', len(test_dataloader.dataset))
 
-model = DeepLabV3Plus(num_classes=num_classes, num_channels=14).to(device)
+model = UNet(n_channels=14,n_classes=num_classes,bilinear=True).to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
 
 T_max = num_epochs
 eta_min = 1e-6
@@ -78,9 +74,6 @@ lr_scheduler = CosineAnnealingLR(optimizer, T_max=T_max, eta_min=eta_min)
 os.makedirs('./saved_models', exist_ok=True)
 min_loss = float('inf')
 plot_losses_data = []
-
-visualize_interval = 1
-global_step = 0	
 
 def calculate_miou(y_pred, y_true, num_classes):
     y_pred = y_pred.flatten()
