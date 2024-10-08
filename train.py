@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 DEBUG = False
 
 data_path = 'MMSeg-YREB'
-num_epochs = 40
+num_epochs = 25
 batch_size = 32
 num_classes = 10
 
@@ -42,9 +42,9 @@ alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
 alpha = alpha / alpha.sum()
 
 # Options: 'miou' or 'lovasz'
-secondary_loss_type = 'lovasz'
+secondary_loss_type = 'miou'
 
-criterion = CombinedLoss(weight_ce=alpha, weight_secondary=1.0, secondary_loss=secondary_loss_type).to(device)
+criterion = CombinedLoss(weight_ce=None, weight_secondary=1.0, secondary_loss=secondary_loss_type).to(device)
 
 mean = [0.485] * 13 + [0.5]
 std = [0.229] * 13 + [0.1]
@@ -147,7 +147,7 @@ for epoch in range(num_epochs):
     is_best = val_loss < min_loss
     if is_best:
         min_loss = val_loss
-        torch.save(model.state_dict(), f'./saved_models/deeplabv3plus_epoch_{epoch+1}_{val_loss:.5f}.pt')
+        torch.save(model.state_dict(), f'./saved_models/UNET_no_w_epoch_{epoch+1}_{val_loss:.5f}.pt')
 
     lr_scheduler.step()
     print(f"Epoch {epoch+1}: Learning rate set to {optimizer.param_groups[0]['lr']}")
