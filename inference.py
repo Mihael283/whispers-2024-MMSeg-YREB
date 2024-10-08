@@ -3,27 +3,26 @@ import torch
 import numpy as np
 import rasterio
 from zipfile import ZipFile
+from models.deeplabv3 import DeepLabV3Plus
 from models.unet import UNet
 from dataloader import WhisperDataLoader, WhisperSegDataset
 
 data_dir = 'MMSeg-YREB'
-model_path = 'saved_models/unet_epoch_41_0.78944.pt'
+model_path = 'saved_models/UNET_no_w_epoch_15_1.18517.pt'
 output_dir = 'predictions'
 zip_filename = 'submission.zip' 
 batch_size = 1 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 os.makedirs(output_dir, exist_ok=True)
 
-model = UNet(n_channels=14, n_classes=10, bilinear=True).to(device)
+model = UNet(n_channels=14,n_classes=10, bilinear=True).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 
-# Define normalization parameters (same as in training)
 mean = [0.485] * 13 + [0.5]
 std = [0.229] * 13 + [0.1]
 
-# Create test dataset using your custom dataloader
 dataloader = WhisperDataLoader(
     data_dir, 
     batch_size=batch_size, 
@@ -31,12 +30,13 @@ dataloader = WhisperDataLoader(
     mean=mean, 
     std=std, 
     normalize=True,
-    augment=False  # Disable augmentations for inference
+    augment=False,  # Disable augmentations for inference
+    apply_lee_filter=False
+
 )
 test_loader = dataloader.get_test_dataloader()
 
-# Create a separate WhisperSegDataset for file list
-test_dataset = WhisperSegDataset(data_dir, split='test', transform=False, augment=False)
+test_dataset = WhisperSegDataset(data_dir, split='test', transform=True, augment=False, apply_lee_filter=False)
 
 def save_prediction_as_tiff(pred_mask, filename, reference_file_path):
     """

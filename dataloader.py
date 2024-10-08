@@ -98,12 +98,6 @@ class WhisperSegDataset(Dataset):
             image = TF.vflip(image)
             mask = TF.vflip(mask)
 
-        if random.random() > 0.8:
-            noise = torch.randn_like(image) * 0.02
-            image = image + noise
-            # Removed clamp to prevent excessive clipping which might cause images to appear white
-            image = torch.clamp(image, image.min(), image.max())
-
         mask = mask.squeeze(0)
 
         return image, mask
@@ -140,7 +134,7 @@ class WhisperDataLoader:
             self.train_dataset, [train_size, val_size]
         )
         
-        self.test_dataset = WhisperSegDataset(data_dir, split='test', transform=self.transform)
+        self.test_dataset = WhisperSegDataset(data_dir, split='test', transform=self.transform, apply_lee_filter=self.apply_lee_filter)
 
     def get_train_dataloader(self):
         return DataLoader(
