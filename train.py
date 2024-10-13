@@ -19,35 +19,19 @@ warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 DEBUG = False
 
 data_path = 'MMSeg-YREB'
-num_epochs = 25
+num_epochs = 150
 batch_size = 32
 num_classes = 10
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-alpha = [
-    0.10,  # Background
-    0.55,  # Tree
-    0.04,  # Grassland
-    0.07,  # Cropland
-    0.19,  # Low Vegetation
-    0.01,  # Wetland
-    0.04,  # Water
-    0.04,  # Built-up
-    0.04,  # Bareground
-    0.01   # Snow
-]
-
-alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
-alpha = alpha / alpha.sum()
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 # Options: 'miou' or 'lovasz'
 secondary_loss_type = 'miou'
 
 criterion = CombinedLoss(weight_ce=None, weight_secondary=1.0, secondary_loss=secondary_loss_type).to(device)
 
-mean = [0.485] * 13 + [0.5]
-std = [0.229] * 13 + [0.1]
+mean = [0.485] * 10 + [0.5] * 11
+std = [0.229] * 10 + [0.1] * 11 
 
 print("\nInitializing DataLoaders with normalization...")
 train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
@@ -63,9 +47,9 @@ print('Number of training data:', len(train_dataloader.dataset))
 print('Number of validation data:', len(val_dataloader.dataset))
 print('Number of test data:', len(test_dataloader.dataset))
 
-model = UNet(n_channels=14,n_classes=num_classes,bilinear=True).to(device)
+model = UNet(n_channels=21,n_classes=num_classes,bilinear=True).to(device)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.0002)
 
 T_max = num_epochs
 eta_min = 1e-6
@@ -100,6 +84,7 @@ for epoch in range(num_epochs):
         pred_mask = model(x)  
 
         loss = criterion(pred_mask, y)
+        
         loss.backward()
         optimizer.step()
         train_loss_list.append(loss.cpu().detach().numpy())
@@ -109,7 +94,7 @@ for epoch in range(num_epochs):
 
         train_loop.set_postfix(loss=np.mean(train_loss_list), acc=np.mean(train_acc_list))
         
-        if batch_idx % 50 == 0:
+        if batch_idx % 200 == 0:
             with torch.no_grad():
                 preds = torch.argmax(pred_mask, dim=1)
                 visualize_batch(model, x, y, preds, batch_idx, epoch, mean=mean, std=std)
@@ -141,13 +126,13 @@ for epoch in range(num_epochs):
     val_loss = np.mean(val_loss_list)
     val_acc = np.mean(val_acc_list)
     
-    print(f'Epoch {epoch+1} - loss : {train_loss:.5f} - acc : {train_acc:.2f} - val loss : {val_loss:.5f} - val acc : {val_acc:.2f} - val mIoU : {val_miou:.2f}')
+    print(f'Epoch {epoch+1} - loss : {train_loss:.5f} - acc : {train_acc:.2f} - val loss : {val_loss:.5f} - val acc : {val_acc:.2f} - val mIoU : {val_miou:.4f}')
     plot_losses_data.append([epoch, train_loss, val_loss])
 
     is_best = val_loss < min_loss
     if is_best:
         min_loss = val_loss
-        torch.save(model.state_dict(), f'./saved_models/UNET_no_w_epoch_{epoch+1}_{val_loss:.5f}.pt')
+        torch.save(model.state_dict(), f'./saved_models/UNET_21_mod_new_no_w_epoch_{epoch+1}_{val_loss:.5f}.pt')
 
     lr_scheduler.step()
     print(f"Epoch {epoch+1}: Learning rate set to {optimizer.param_groups[0]['lr']}")
