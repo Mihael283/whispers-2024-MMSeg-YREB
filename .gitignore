@@ -7,7 +7,6 @@ saved_models/
 visualizations/
 predictions/
 *.zip
-*.png
 *.jpg
 best/
 # Byte-compiled / optimized / DLL files
